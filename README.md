@@ -1,7 +1,9 @@
 # DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning
 
-Authors: [Chengxuan Qian](https://qiancx.com/), [Shuo Xing](https://shuoxing98.github.io/),
+Authors: [Chengxuan Qian](https://qiancx.com/), [Shuo Xing](https://shuoxing98.github.io/), [Shawn Li](https://lili0415.github.io/), [Yue Zhao](https://viterbi-web.usc.edu/~yzhao010/lab), [Zhengzhong Tu](https://vztu.github.io/)
 
-DecAlign introduces a hierarchical cross-modal alignment framework to enhance multimodal representation learning. By decoupling modality-unique (heterogeneous) and modality-common (homogeneous) features, it employs prototype-based optimal transport and MMD regularization for fine-grained cross-modal alignment, effectively mitigating modality interference and enhancing semantic consistency. Extensive experiments demonstrate that DecAlign consistently outperforms state-of-the-art methods across multiple benchmarks. Its novel approach establishes a new paradigm for multimodal learning, providing a solid foundation for advancing cross-modal information integration and alignment in academic research.
+DecAlign is a novel hierarchical cross-modal alignment framework that explicitly disentangles multimodal representations into modality-unique (heterogeneous) and modality-common (homogeneous) components, which not only facilitates fine-grained alignment through prototype-guided optimal transport but also enhances semantic consistency via latent distribution matching. Moreover, DecAlign effectively mitigates distributional discrepancies while preserving modality-specific characteristics, yielding consistent performance improvements across multiple multimodal benchmarks.
+
+![Figure 1. The framework of our proposed DecAlign approach](figs\pipline.png "Figure 1. The framework of our proposed DecAlign approach")
 
 ## Prepare Datasets
