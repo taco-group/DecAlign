@@ -207,17 +207,17 @@
 <section class="hero is-small">
   <div class="hero-body">
     <div class="container is-max-desktop content">
-      <h2 class="title is-3">Results</h2>
+      <h2 class="title is-3">Ablation Analysis</h2>
         <p>
-          Re-Align achieves the best among the evaluated methods on both POPE and HallusionBench for LLaVA-v1.5-7B and LLaVA-v1.6-Mistral-7B, highlighting the effectiveness of our approach in mitigating hallucinations of VLMs. Furthermore, Re-Align can provide generally on-par or better performance than the vanilla models and baseline alignment methods on each evaluated general VQA task, ultimately achieving the best overall results.
+          Ablation studies (Tables 3 and 4) systematically evaluate the impact of DecAlign’s key modules and specific alignment strategies. Table 3 demonstrates that multimodal feature decoupling (MFD), heterogeneous alignment (Hete), and homogeneous alignment (Homo) each substantially contribute to performance, with the removal of either Hete or Homo individually resulting in minor performance drops, and the absence of both causing a notable decline. This confirms their essential roles and complementary interaction. Table 4 further analyzes individual alignment techniques such as Prototype-Based Optimal Transport (Proto-OT), Contrastive Training (CT), Semantic Consistency (Sem), and Maximum Mean Discrepancy (MMD). Results show that each alignment strategy significantly influences performance, emphasizing the critical importance of both fine-grained and global alignment mechanisms within DecAlign.
         </p>
-        <img src="asset\pics\table1.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 800px; height: auto;"/>
-        <div class="content has-text-centered"><p></p><strong>Table 1. </strong> 
-          <em>Impact of Re-Align across hallucination benchmarks for VLMs, and comparisons with baselines.</em>
+        <img src="figs/ab1.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 800px; height: auto;"/>
+        <div class="content has-text-centered"><p></p><strong>Table 3. </strong> 
+          <em>Ablation study on different key modules for DecAlign on CMU-MOSI and CMU-MOSEI datasets.</em>
         </div>
-        <img src="asset\pics\table2.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 800px; height: auto;"/>
-        <div class="content has-text-centered"><p></p><strong>Table 2. </strong> 
-          <em>Impact of Re-Align across general benchmarks for VLMs, and comparisons with baselines.</em>
+        <img src="figs\ab2.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 800px; height: auto;"/>
+        <div class="content has-text-centered"><p></p><strong>Table 4. </strong> 
+          <em>Ablation study on different alignment strategies for DecAlign on CMU-MOSI and CMU-MOSEI datasets.</em>
         </div>
 
       </div>
