@@ -31,4 +31,8 @@ Install all the required libraries:
 
 ### Dataset Preparation
 
-CMU-MOSI and CMU-MOSEI
+The preprocess of CMU-MOSI, CMU-MOSEI and CH-SIMS datasets follows [MMSA](https://github.com/thuiar/MMSA), here we provide the processed datasets through these links:
+
+CMU-MOSI: [https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link](https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link)
+
+CMU-MOSEI: [https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link](https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link)
