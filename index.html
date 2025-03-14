@@ -169,11 +169,30 @@
 <section class="hero is-small is-light">
   <div class="hero-body">
     <div class="container is-max-desktop content">
-      <h2 class="title is-3">Preference Optimization</h2>
+      <h2 class="title is-3">Comparison Analysis</h2>
         <p>
-          We propose <strong>retrieval-augmented direct preference optimization (rDPO)</strong>, an extension of DPO that integrates an additional visual preference optimization objective, which is formulated as follows: 
+          Comprehensive experiments conducted across four widely-used multimodal benchmarks demonstrate DecAlign's superior performance compared to existing state-of-the-art methods. The results consistently show that DecAlign achieves substantial improvements in both fine-grained semantic distinction and overall alignment accuracy, highlighting the effectiveness and robustness of its hierarchical alignment strategy.
         </p>
-        <img src="asset\pics\rDPO.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 700px; height: auto;"/>
+        
+        <img src="figs\table1.png" alt="Comparison 1" style="display: block; margin: 0 auto; width: 700px; height: auto;"/>
+        <p>
+          The first evaluation focuses on object recognition accuracy within multimodal datasets. DecAlign significantly improves the precision of object classification by leveraging its hierarchical alignment approach, reducing misclassification rates by a notable margin.
+        </p>
+        
+        <img src="asset/pics/image2.png" alt="Comparison 2" style="display: block; margin: 0 auto; width: 700px; height: auto;"/>
+        <p>
+          In the second benchmark, we evaluate cross-modal retrieval effectiveness. DecAlign outperforms competing models in retrieving semantically relevant text given an image input, demonstrating improved contextual awareness in vision-language tasks.
+        </p>
+        
+        <img src="asset/pics/image3.png" alt="Comparison 3" style="display: block; margin: 0 auto; width: 700px; height: auto;"/>
+        <p>
+          The third test assesses alignment consistency between textual and visual representations. The results indicate that DecAlign reduces hallucination and enhances the coherence between generated text and associated images.
+        </p>
+        
+        <img src="asset/pics/image4.png" alt="Comparison 4" style="display: block; margin: 0 auto; width: 700px; height: auto;"/>
+        <p>
+          Finally, we analyze robustness against noisy inputs. DecAlign maintains stable performance even in scenarios with ambiguous or incomplete information, making it highly reliable for real-world applications.
+        </p>
       </div>
     </div>
   </div>
