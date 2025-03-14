@@ -11,4 +11,7 @@ DecAlign is a novel hierarchical cross-modal alignment framework that explicitly
 </div>
 
 
-## Prepare Datasets
+### Environmental Settings
+
+
+### Dataset Preparation
