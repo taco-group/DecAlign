@@ -9,6 +9,25 @@ DecAlign is a novel hierarchical cross-modal alignment framework that explicitly
   <p><em>Figure 1. The Framework of our proposed DecAlign approach.</em></p>
 </div>
 
-### Environmental Settings
+### Installation
+
+Clone this repository:
+
+```
+git clone https://github.com/taco-group/DecAlign.git
+```
+
+Prepare the Python environment:
+
+```
+cd DecAlign
+conda create --name decalign python=3.9 -y
+conda activate decalign
+```
+
+Install all the required libraries:
+
+`pip install -r requirements.txt `
+
 
 ### Dataset Preparation
