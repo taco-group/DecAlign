@@ -219,7 +219,17 @@
         <div class="content has-text-centered"><p></p><strong>Table 4. </strong> 
           <em>Ablation study on different alignment strategies for DecAlign on CMU-MOSI and CMU-MOSEI datasets.</em>
         </div>
-
+        <p>
+          Figures 2 and 4 provide additional insights into DecAlign's effectiveness. Figure 2 visually demonstrates the impact of removing heterogeneous and homogeneous alignment modules, highlighting the consistent performance degradation across different sentiment categories when either module is omitted. This underscores the necessity of both alignment strategies in maintaining robust multimodal sentiment classification performance. Figure 3 offers a visual case study on the modality gap between vision and language features, illustrating that DecAlign effectively reduces modality discrepancies through hierarchical alignment. Models without heterogeneous or homogeneous alignment exhibit significantly larger modality gaps, validating DecAlign’s capability to bridge semantic and distributional differences across modalities.
+        </p>
+        <img src="figs\ab3.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 600px; height: auto;"/>
+        <div class="content has-text-centered"><p></p><strong>Figure 2. </strong> 
+          <em>Visualization of ablation studies on accuracy comparison across different emotion categories.</em>
+        </div>
+        <img src="figs\ab4.png" alt="MY ALT TEXT" style="display: block; margin: 0 auto; width: 800px; height: auto;"/>
+        <div class="content has-text-centered"><p></p><strong>Figure 3. </strong> 
+          <em>Visualization of the modality gap between vision and language on CMU-MOSEI dataset.</em>
+        </div>
       </div>
     </div>
   </div>
