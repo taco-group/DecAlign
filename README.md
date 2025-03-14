@@ -29,5 +29,6 @@ Install all the required libraries:
 
 `pip install -r requirements.txt `
 
-
 ### Dataset Preparation
+
+CMU-MOSI and CMU-MOSEI
