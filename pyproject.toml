@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ProtoAlign"
+version = "0.1.0"
+description = "Multimodal Sentiment Analysis with Prototype Alignment"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "numpy>=1.21.0",
+    "pandas>=1.3.0",
+    "scikit-learn>=1.0.0",
+    "scipy>=1.7.0",
+    "tqdm>=4.60.0",
+    "easydict>=1.9",
+    "tensorboard>=2.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["models*", "trains*", "utils*"]

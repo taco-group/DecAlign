@@ -36,3 +36,96 @@ The preprocess of CMU-MOSI, CMU-MOSEI and CH-SIMS datasets follows [MMSA](https:
 CMU-MOSI: [https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link](https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link)
 
 CMU-MOSEI: [https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link](https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link)
+
+After downloading, organize the data in the following structure:
+```
+data/
+├── MOSI/
+│   └── mosi_data.pkl
+├── MOSEI/
+│   └── mosei_data.pkl
+└── IEMOCAP/
+    └── iemocap_data.pkl
+```
+
+### Training
+
+Train DecAlign on CMU-MOSI dataset:
+
+```bash
+python main.py --dataset mosi --data_dir ./data --mode train --seeds 1111 --gpu_ids 0
+```
+
+Train on CMU-MOSEI dataset:
+
+```bash
+python main.py --dataset mosei --data_dir ./data --mode train --seeds 1111 --gpu_ids 0
+```
+
+Train on IEMOCAP dataset:
+
+```bash
+python main.py --dataset iemocap --data_dir ./data --mode train --seeds 1111 --gpu_ids 0
+```
+
+**Command Line Arguments:**
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--dataset` | Dataset name (mosi, mosei, iemocap) | mosi |
+| `--data_dir` | Path to data directory | ./data |
+| `--mode` | Run mode (train or test) | train |
+| `--seeds` | Random seeds for reproducibility | 1111 |
+| `--gpu_ids` | GPU device IDs to use | 0 |
+| `--model_save_dir` | Directory to save trained models | ./pt |
+| `--res_save_dir` | Directory to save results | ./result |
+| `--log_dir` | Directory to save logs | ./log |
+
+### Evaluation
+
+Evaluate a trained model:
+
+```bash
+python main.py --dataset mosi --data_dir ./data --mode test --gpu_ids 0
+```
+
+### Project Structure
+
+```
+DecAlign/
+├── main.py                 # Entry point
+├── config.py               # Configuration settings
+├── data_loader.py          # Data loading utilities
+├── config/
+│   └── dec_config.json     # Model hyperparameters
+├── models/
+│   └── model.py            # DecAlign model architecture
+├── trains/
+│   ├── ATIO.py             # Training logic
+│   └── subNets/            # Sub-network modules
+│       ├── BertTextEncoder.py
+│       └── transformer.py
+├── utils/
+│   ├── functions.py        # Utility functions
+│   └── metrices.py         # Evaluation metrics
+└── scripts/                # Training scripts
+    ├── run_mosi.sh
+    ├── run_mosei.sh
+    └── run_iemocap.sh
+```
+
+### Citation
+
+If you find this work useful, please cite our paper:
+
+```bibtex
+@article{qian2024decalign,
+  title={DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning},
+  author={Qian, Chengxuan and Xing, Shuo and Li, Shawn and Zhao, Yue and Tu, Zhengzhong},
+  journal={arXiv preprint},
+  year={2024}
+}
+```
+
+### Acknowledgement
+
+This codebase is built upon [MMSA](https://github.com/thuiar/MMSA). We thank the authors for their excellent work.
