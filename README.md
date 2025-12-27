@@ -118,11 +118,11 @@ DecAlign/
 If you find this work useful, please cite our paper:
 
 ```bibtex
-@article{qian2024decalign,
+@article{qian2025decalign,
   title={DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning},
   author={Qian, Chengxuan and Xing, Shuo and Li, Shawn and Zhao, Yue and Tu, Zhengzhong},
-  journal={arXiv preprint},
-  year={2024}
+  journal={arXiv preprint arXiv:2503.11892},
+  year={2025}
 }
 ```
 
