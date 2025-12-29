@@ -31,19 +31,16 @@ Install all the required libraries:
 
 ### Dataset Preparation
 
-The preprocess of CMU-MOSI, CMU-MOSEI and CH-SIMS datasets follows [MMSA](https://github.com/thuiar/MMSA), here we provide the processed datasets through these links:
-
-CMU-MOSI: [https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link](https://drive.google.com/drive/folders/1A6lpSk1ErSXhXHEJcNqFyOomSkP81Xw7?usp=drive_link)
-
-CMU-MOSEI: [https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link](https://drive.google.com/drive/folders/1XZ4z94I-AlXNQfsWmW01_iROtjWmlmdh?usp=drive_link)
-
+The preprocess of CMU-MOSI, CMU-MOSEI and CH-SIMS datasets follows [MMSA](https://github.com/thuiar/MMSA). For IEMOCAP, please refer to the link: https://drive.google.com/file/d/1Hn82-ZD0CNqXQtImd982YHHi-3gIX2G3/view?usp=share_link.
 After downloading, organize the data in the following structure:
 ```
 data/
 ├── MOSI/
-│   └── mosi_data.pkl
+│   └── mosi_aligned_50.pkl
 ├── MOSEI/
-│   └── mosei_data.pkl
+│   └── mosei_aligned_50.pkl
+├── CH-SIMS/
+│   └── chsims.pkl
 └── IEMOCAP/
     └── iemocap_data.pkl
 ```
