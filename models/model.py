@@ -372,8 +372,15 @@ class DecAlign(nn.Module):
         fusion_rep_cma = torch.cat([last_h_l, last_h_a, last_h_v], dim=1)  # [N, 6*d_l]
         fusion_rep_cma = self.cma_proj(fusion_rep_cma)  # [N, 3*d_l]
 
-        ## 7.3 Fuse two paths: simple concatenation
-        final_rep = torch.cat([fusion_rep_trans, fusion_rep_cma], dim=1)  # [N, 6*d_l]
+        ## 7.3 Homogeneity branch: average pooling over time dimension
+        c_l_avg = c_l.mean(dim=2)  # [N, d_l]
+        c_a_avg = c_a.mean(dim=2)  # [N, d_a]
+        c_v_avg = c_v.mean(dim=2)  # [N, d_v]
+        fusion_rep_homo = torch.cat([c_l_avg, c_a_avg, c_v_avg], dim=1)  # [N, 3*d_l]
+
+        ## 7.4 Fuse heterogeneous paths and concatenate with homogeneous
+        fusion_rep_hete = fusion_rep_trans + fusion_rep_cma  # [N, 3*d_l]
+        final_rep = torch.cat([fusion_rep_hete, fusion_rep_homo], dim=1)  # [N, 6*d_l]
         output = self.out_layer(final_rep)
 
         res = {
@@ -389,6 +396,8 @@ class DecAlign(nn.Module):
             'c_v': c_v,
             'fusion_rep_trans': fusion_rep_trans,
             'fusion_rep_cma': fusion_rep_cma,
+            'fusion_rep_hete': fusion_rep_hete,
+            'fusion_rep_homo': fusion_rep_homo,
             'final_rep': final_rep
         }
         return res
