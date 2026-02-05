@@ -104,15 +104,15 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
     # Dataset specific configurations
     if dataset_name.lower() == 'mosi':
         dataset_config = {
-            'featurePath': os.path.join(data_dir, 'MOSI/mosi_data.pkl'),
-            'seq_lens': [50, 500, 375],
-            'feature_dims': [768, 74, 35],
+            'featurePath': os.path.join(data_dir, 'MOSI/mosi_aligned_50.pkl'),
+            'seq_lens': [50, 50, 50],
+            'feature_dims': [768, 5, 20],
             'train_mode': 'regression',
         }
     elif dataset_name.lower() == 'mosei':
         dataset_config = {
-            'featurePath': os.path.join(data_dir, 'MOSEI/mosei_data.pkl'),
-            'seq_lens': [50, 500, 500],
+            'featurePath': os.path.join(data_dir, 'MOSEI/mosei_aligned_50.pkl'),
+            'seq_lens': [50, 50, 50],
             'feature_dims': [768, 74, 35],
             'train_mode': 'regression',
         }

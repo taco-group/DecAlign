@@ -19,24 +19,25 @@ class DecAlign(nn.Module):
                                                 pretrained=args.pretrained)
         
         # 2. Set sequence lengths for each modality based on dataset
+        # Order: len_l=text, len_a=audio, len_v=video
         if args.dataset_name == 'mosi':
             if args.need_data_aligned:
-                self.len_l, self.len_v, self.len_a = 50, 50, 50
+                self.len_l, self.len_a, self.len_v = 50, 50, 50
             else:
-                self.len_l, self.len_v, self.len_a = 50, 500, 375
+                self.len_l, self.len_a, self.len_v = 50, 500, 375
         elif args.dataset_name == 'mosei':
             if args.need_data_aligned:
-                self.len_l, self.len_v, self.len_a = 50, 50, 50
+                self.len_l, self.len_a, self.len_v = 50, 50, 50
             else:
-                self.len_l, self.len_v, self.len_a = 50, 500, 500
+                self.len_l, self.len_a, self.len_v = 50, 500, 500
         elif args.dataset_name == 'iemocap':
             if args.need_data_aligned:
-                self.len_l, self.len_v, self.len_a = 50, 50, 50
+                self.len_l, self.len_a, self.len_v = 50, 50, 50
             else:
-                self.len_l, self.len_v, self.len_a = 50, 375, 500
+                self.len_l, self.len_a, self.len_v = 50, 375, 500
         else:
             # Default fallback for unknown datasets
-            self.len_l, self.len_v, self.len_a = 50, 500, 500
+            self.len_l, self.len_a, self.len_v = 50, 500, 500
         
         # 3. Original and target feature dimension settings
         self.orig_d_l, self.orig_d_a, self.orig_d_v = args.feature_dims

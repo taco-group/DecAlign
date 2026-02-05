@@ -4,7 +4,7 @@
     "use_finetune": true,
     "transformers": "bert",
     "pretrained": "bert-base-uncased",
-    "need_data_aligned": false,
+    "need_data_aligned": true,
     "dst_feature_dim_nheads": [40, 10],
     "nlevels": 5,
     "conv1d_kernel_size_l": 1,

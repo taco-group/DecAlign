@@ -23,7 +23,13 @@ class MMDataset(Dataset):
             data = pickle.load(f)
 
         if getattr(self.args, 'use_bert', False):
-            self.text = data[self.mode]['text_bert'].astype(np.float32)
+            text_bert = data[self.mode]['text_bert']
+            # MMSA format: [N, 3, seq_len] int64 (input_ids, type_ids, attention_mask)
+            # Keep as int64 so BertTextEncoder can detect and process it correctly
+            if text_bert.ndim == 3 and text_bert.shape[1] == 3 and np.issubdtype(text_bert.dtype, np.integer):
+                self.text = text_bert  # keep int64 for BERT tokenizer input
+            else:
+                self.text = text_bert.astype(np.float32)
         else:
             self.text = data[self.mode]['text'].astype(np.float32)
 
@@ -37,7 +43,11 @@ class MMDataset(Dataset):
             with open(self.args.feature_T, 'rb') as f:
                 data_T = pickle.load(f)
             if getattr(self.args, 'use_bert', False):
-                self.text = data_T[self.mode]['text_bert'].astype(np.float32)
+                text_bert_T = data_T[self.mode]['text_bert']
+                if text_bert_T.ndim == 3 and text_bert_T.shape[1] == 3 and np.issubdtype(text_bert_T.dtype, np.integer):
+                    self.text = text_bert_T
+                else:
+                    self.text = text_bert_T.astype(np.float32)
                 self.args.feature_dims[0] = 768
             else:
                 self.text = data_T[self.mode]['text'].astype(np.float32)
@@ -64,12 +74,18 @@ class MMDataset(Dataset):
         if not getattr(self.args, 'need_data_aligned', False):
             if getattr(self.args, 'feature_A', '') != "":
                 self.audio_lengths = list(data_A[self.mode]['audio_lengths'])
-            else:
+            elif 'audio_lengths' in data[self.mode]:
                 self.audio_lengths = data[self.mode]['audio_lengths']
+            else:
+                # Aligned data has no audio_lengths; use full sequence length
+                self.audio_lengths = [self.audio.shape[1]] * len(self.audio)
             if getattr(self.args, 'feature_V', '') != "":
                 self.vision_lengths = list(data_V[self.mode]['vision_lengths'])
-            else:
+            elif 'vision_lengths' in data[self.mode]:
                 self.vision_lengths = data[self.mode]['vision_lengths']
+            else:
+                # Aligned data has no vision_lengths; use full sequence length
+                self.vision_lengths = [self.vision.shape[1]] * len(self.vision)
 
         # Clean up inf values
         self.audio[self.audio == -np.inf] = 0
@@ -85,7 +101,11 @@ class MMDataset(Dataset):
             data = pickle.load(f)
 
         if getattr(self.args, 'use_bert', False):
-            self.text = data[self.mode]['text_bert'].astype(np.float32)
+            text_bert = data[self.mode]['text_bert']
+            if text_bert.ndim == 3 and text_bert.shape[1] == 3 and np.issubdtype(text_bert.dtype, np.integer):
+                self.text = text_bert  # keep int64 for BERT tokenizer input
+            else:
+                self.text = text_bert.astype(np.float32)
         else:
             self.text = data[self.mode]['text'].astype(np.float32)
 
@@ -124,18 +144,37 @@ class MMDataset(Dataset):
     def get_seq_len(self):
         """Get sequence lengths for each modality"""
         if getattr(self.args, 'use_bert', False):
-            return (self.text.shape[2], self.audio.shape[1], self.vision.shape[1])
+            # MMSA format text_bert: [N, 3, seq_len] → seq_len = shape[2]
+            # Pre-encoded text_bert: [N, seq_len, dim] → seq_len = shape[1]
+            if self.text.ndim == 3 and self.text.shape[1] == 3 and np.issubdtype(self.text.dtype, np.integer):
+                text_seq_len = self.text.shape[2]
+            else:
+                text_seq_len = self.text.shape[1]
         else:
-            return (self.text.shape[1], self.audio.shape[1], self.vision.shape[1])
+            text_seq_len = self.text.shape[1]
+        return (text_seq_len, self.audio.shape[1], self.vision.shape[1])
 
     def get_feature_dim(self):
         """Get feature dimensions for each modality"""
-        return self.text.shape[2], self.audio.shape[2], self.vision.shape[2]
+        if getattr(self.args, 'use_bert', False):
+            # MMSA format text_bert: [N, 3, seq_len] → BERT output will be 768-d
+            if self.text.ndim == 3 and self.text.shape[1] == 3 and np.issubdtype(self.text.dtype, np.integer):
+                text_feat_dim = 768
+            else:
+                text_feat_dim = self.text.shape[2]
+        else:
+            text_feat_dim = self.text.shape[2]
+        return text_feat_dim, self.audio.shape[2], self.vision.shape[2]
 
     def __getitem__(self, index):
+        # For MMSA format text_bert (int64), use LongTensor to preserve integer type
+        if np.issubdtype(self.text.dtype, np.integer):
+            text_tensor = torch.LongTensor(self.text[index])
+        else:
+            text_tensor = torch.Tensor(self.text[index])
         sample = {
             'raw_text': self.raw_text[index],
-            'text': torch.Tensor(self.text[index]),
+            'text': text_tensor,
             'audio': torch.Tensor(self.audio[index]),
             'vision': torch.Tensor(self.vision[index]),
             'index': index,
