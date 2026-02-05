@@ -1,5 +1,9 @@
 # DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning
 
+**ICLR 2026**
+
+[![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2503.11892) [![Project Page](https://img.shields.io/badge/Project-Page-blue)](https://taco-group.github.io/DecAlign/)
+
 Authors: [Chengxuan Qian](https://qiancx.com/), [Shuo Xing](https://shuoxing98.github.io/), [Shawn Li](https://lili0415.github.io/), [Yue Zhao](https://viterbi-web.usc.edu/~yzhao010/lab), [Zhengzhong Tu](https://vztu.github.io/)
 
 DecAlign is a novel hierarchical cross-modal alignment framework that explicitly disentangles multimodal representations into modality-unique (heterogeneous) and modality-common (homogeneous) components, which not only facilitates fine-grained alignment through prototype-guided optimal transport but also enhances semantic consistency via latent distribution matching. Moreover, DecAlign effectively mitigates distributional discrepancies while preserving modality-specific characteristics, yielding consistent performance improvements across multiple multimodal benchmarks.
@@ -115,11 +119,11 @@ DecAlign/
 If you find this work useful, please cite our paper:
 
 ```bibtex
-@article{qian2025decalign,
+@inproceedings{qian2026decalign,
   title={DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning},
   author={Qian, Chengxuan and Xing, Shuo and Li, Shawn and Zhao, Yue and Tu, Zhengzhong},
-  journal={arXiv preprint arXiv:2503.11892},
-  year={2025}
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026}
 }
 ```
 
