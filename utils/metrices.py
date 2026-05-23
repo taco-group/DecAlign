@@ -9,12 +9,14 @@ class MetricsTop():
             self.metrics_dict = {
                 'MOSI': self.__eval_mosi_regression,
                 'MOSEI': self.__eval_mosei_regression,
+                'SIMS': self.__eval_sims_regression,
                 'IEMOCAP': self.__eval_mosei_regression,  # Fallback for regression mode
             }
         else:
             self.metrics_dict = {
                 'MOSI': self.__eval_mosi_classification,
                 'MOSEI': self.__eval_mosei_classification,
+                'SIMS': self.__eval_sims_classification,
                 'IEMOCAP': self.__eval_iemocap_classification,
             }
 
@@ -63,6 +65,9 @@ class MetricsTop():
     def __eval_mosei_classification(self, y_pred, y_true):
         return self.__eval_mosi_classification(y_pred, y_true)
 
+    def __eval_sims_classification(self, y_pred, y_true):
+        return self.__eval_mosi_classification(y_pred, y_true)
+
     def __multiclass_acc(self, y_pred, y_true):
         """
         Compute the multiclass accuracy w.r.t. groundtruth
@@ -92,6 +97,8 @@ class MetricsTop():
 
         mae = np.mean(np.absolute(test_preds - test_truth)).astype(np.float64)   # Mean L1 error
         corr = np.corrcoef(test_preds, test_truth)[0][1]
+        if np.isnan(corr):
+            corr = 0.0
         mult_a7 = self.__multiclass_acc(test_preds_a7, test_truth_a7)
         mult_a5 = self.__multiclass_acc(test_preds_a5, test_truth_a5)
         mult_a3 = self.__multiclass_acc(test_preds_a3, test_truth_a3)
@@ -109,15 +116,55 @@ class MetricsTop():
         f_score = f1_score(binary_truth, binary_preds, average='weighted')
 
         eval_results = {
-            "Acc_2":  round(non_zeros_acc2, 4),
-            "F1_score": round(non_zeros_f1_score, 4),
-            "MAE": round(mae, 4)
+            "Acc_2":  float(round(non_zeros_acc2, 4)),
+            "F1_score": float(round(non_zeros_f1_score, 4)),
+            "MAE": float(round(mae, 4)),
+            "Corr": float(round(corr, 4)),
+            "Acc_7": float(round(mult_a7, 4))
         }
         return eval_results
 
 
     def __eval_mosi_regression(self, y_pred, y_true):
         return self.__eval_mosei_regression(y_pred, y_true)
+
+    def __eval_sims_regression(self, y_pred, y_true):
+        test_preds = y_pred.view(-1).cpu().detach().numpy()
+        test_truth = y_true.view(-1).cpu().detach().numpy()
+        test_preds = np.clip(test_preds, a_min=-1.0, a_max=1.0)
+        test_truth = np.clip(test_truth, a_min=-1.0, a_max=1.0)
+
+        def bucketize(values, splits):
+            bucketed = values.copy()
+            for i in range(len(splits) - 1):
+                mask = np.logical_and(values > splits[i], values <= splits[i + 1])
+                bucketed[mask] = i
+            return bucketed
+
+        preds_a2 = bucketize(test_preds, [-1.01, 0.0, 1.01])
+        truth_a2 = bucketize(test_truth, [-1.01, 0.0, 1.01])
+        preds_a3 = bucketize(test_preds, [-1.01, -0.1, 0.1, 1.01])
+        truth_a3 = bucketize(test_truth, [-1.01, -0.1, 0.1, 1.01])
+        preds_a5 = bucketize(test_preds, [-1.01, -0.7, -0.1, 0.1, 0.7, 1.01])
+        truth_a5 = bucketize(test_truth, [-1.01, -0.7, -0.1, 0.1, 0.7, 1.01])
+
+        mae = np.mean(np.absolute(test_preds - test_truth)).astype(np.float64)
+        corr = np.corrcoef(test_preds, test_truth)[0][1]
+        if np.isnan(corr):
+            corr = 0.0
+        acc_2 = self.__multiclass_acc(preds_a2, truth_a2)
+        acc_3 = self.__multiclass_acc(preds_a3, truth_a3)
+        acc_5 = self.__multiclass_acc(preds_a5, truth_a5)
+        f_score = f1_score(truth_a2, preds_a2, average='weighted')
+
+        return {
+            "Mult_acc_2": float(round(acc_2, 4)),
+            "Mult_acc_3": float(round(acc_3, 4)),
+            "Mult_acc_5": float(round(acc_5, 4)),
+            "F1_score": float(round(f_score, 4)),
+            "MAE": float(round(mae, 4)),
+            "Corr": float(round(corr, 4)),
+        }
 
     def __eval_iemocap_classification(self, y_pred, y_true):
         """
@@ -131,12 +178,15 @@ class MetricsTop():
         y_pred_class = np.argmax(y_pred, axis=1)
         y_true_class = y_true.astype(int).flatten()
 
-        acc = accuracy_score(y_true_class, y_pred_class)
-        f1 = f1_score(y_true_class, y_pred_class, average='weighted')
+        labels = np.arange(6)
+        wacc = accuracy_score(y_true_class, y_pred_class)
+        waf1 = f1_score(y_true_class, y_pred_class, labels=labels, average='weighted', zero_division=0)
 
         eval_results = {
-            "Acc": round(acc, 4),
-            "F1_score": round(f1, 4),
+            "WAcc": round(wacc, 4),
+            "WAF1": round(waf1, 4),
+            "Acc": round(wacc, 4),
+            "F1_score": round(waf1, 4),
         }
         return eval_results
 

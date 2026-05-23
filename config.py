@@ -3,6 +3,18 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+DATASET_ALIASES = {
+    'ch-sims': 'sims',
+    'ch_sims': 'sims',
+    'chsims': 'sims',
+    'ch-sims-v1': 'sims',
+}
+
+
+def normalize_dataset_name(dataset_name):
+    dataset_name = dataset_name.lower()
+    return DATASET_ALIASES.get(dataset_name, dataset_name)
+
 
 def dict_to_namespace(d):
     """
@@ -34,6 +46,7 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
     """
     Get configuration for regression tasks
     """
+    dataset_name = normalize_dataset_name(dataset_name)
     if config_file == "":
         config_file = Path(__file__).parent / "config" / "dec_config.json"
     
@@ -79,6 +92,17 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
         # Loss weights
         'alpha1': 0.1,  # decoupling loss weight
         'alpha2': 0.1,  # alignment loss weight
+        'task_loss': 'mae',
+        'loss_contract': 'paper',
+        'dec_loss_weight': 1.0,
+        'alpha': 0.1,
+        'beta': 0.1,
+        'ct_weight': 0.0,
+        'ct_temperature': 0.1,
+        'use_sequence_mask': False,
+        'num_classes': 1,
+        'class_weight': 'none',
+        'iemocap_protocol': 'session_valid',
         
         # Training parameters
         'batch_size': 24,
@@ -86,6 +110,10 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
         'weight_decay': 0.0,
         'num_epochs': 100,
         'patience': 20,
+        'scheduler_patience': None,
+        'early_stop_patience': None,
+        'selection_metric': None,
+        'scheduler_metric': None,
         'clip': 0.8,
         'when': 20,
         'factor': 0.1,
@@ -119,15 +147,67 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
     elif dataset_name.lower() == 'iemocap':
         dataset_config = {
             'featurePath': os.path.join(data_dir, 'IEMOCAP/iemocap_data.pkl'),
-            'seq_lens': [50, 375, 500],
-            'feature_dims': [768, 74, 35],
+            'seq_lens': [1, 1, 1],
+            'feature_dims': [1024, 512, 1024],
+            'use_bert': False,
+            'need_data_aligned': True,
             'train_mode': 'classification',  # IEMOCAP is classification task
+            'num_classes': 6,
+            'selection_metric': 'WAF1',
+            'scheduler_metric': 'WAF1',
+            'selection_mode': 'max',
+            'scheduler_mode': 'max',
+        }
+    elif dataset_name.lower() == 'sims':
+        chsims_path = os.path.join(data_dir, 'CH-SIMS/chsims.pkl')
+        mmsa_path = os.path.join(data_dir, 'SIMS/Processed/unaligned_39.pkl')
+        dataset_config = {
+            # DecAlign README uses CH-SIMS/chsims.pkl, while MMSA stores the same
+            # preprocessed feature file as SIMS/Processed/unaligned_39.pkl.
+            'featurePath': chsims_path if os.path.exists(chsims_path) else mmsa_path,
+            'seq_lens': [39, 400, 55],
+            'feature_dims': [768, 33, 709],
+            'train_samples': 1368,
+            'num_classes': 3,
+            'language': 'cn',
+            'use_bert': True,
+            'use_finetune': True,
+            'transformers': 'bert',
+            'pretrained': 'bert-base-chinese',
+            'need_data_aligned': False,
+            'need_feature_standardized': True,
+            'feature_standardize_modalities': ['audio', 'vision'],
+            'feature_clip_percentiles': [0.5, 99.5],
+            'train_mode': 'regression',
+            # Paper Appendix B.3 / Table 4 hyperparameters for CH-SIMS.
+            'attn_dropout': 0.4,
+            'attn_dropout_a': 0.3,
+            'attn_dropout_v': 0.1,
+            'relu_dropout': 0.1,
+            'embed_dropout': 0.3,
+            'res_dropout': 0.1,
+            'output_dropout': 0.6,
+            'text_dropout': 0.5,
+            'dst_feature_dim_nheads': [32, 8],
+            'conv1d_kernel_size_l': 5,
+            'conv1d_kernel_size_a': 5,
+            'conv1d_kernel_size_v': 5,
+            'nlevels': 4,
+            'batch_size': 32,
+            'learning_rate': 5e-5,
+            'weight_decay': 0.005,
+            'task_loss': 'mse',
+            'selection_metric': 'MAE',
+            'scheduler_metric': 'MAE',
+            'alpha': 0.05,
+            'beta': 0.05,
+            'num_epochs': 50,
+            'patience': 5,
+            'clip': 0.5,
+            'factor': 0.1,
         }
     else:
         dataset_config = {}
-
-    # Update default config with dataset specific config
-    default_config.update(dataset_config)
 
     # Load from file if exists
     if config_file and os.path.exists(config_file):
@@ -137,6 +217,12 @@ def get_config_regression(model_name, dataset_name, config_file="", data_dir=Non
             default_config.update(file_config)
         except Exception as e:
             print(f"Warning: Could not load config file {config_file}: {e}")
+
+    # Dataset paths and task contracts should remain stable even when the
+    # shared config file supplies model hyperparameters.
+    default_config.update(dataset_config)
+    default_config['model_name'] = model_name.lower()
+    default_config['dataset_name'] = dataset_name.lower()
 
     # Convert to SimpleNamespace for dot notation access
     return dict_to_namespace(default_config)

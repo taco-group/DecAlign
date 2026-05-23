@@ -4,21 +4,46 @@ import logging
 import os
 import time
 from pathlib import Path
+import ast
 import numpy as np
 import pandas as pd
 import torch
 
-from config import get_config_regression
+from config import get_config_regression, normalize_dataset_name
 from data_loader import MMDataLoader
 from trains.ATIO import DecAlignTrainer
 from utils import assign_gpu, setup_seed
-from models.model import DecAlign
+from models import build_model
 
 import sys
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:2"
 logger = logging.getLogger('DecAlign')
+
+
+def _parse_override_value(value):
+    lowered = value.lower()
+    if lowered == 'true':
+        return True
+    if lowered == 'false':
+        return False
+    if lowered == 'none':
+        return None
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+
+
+def _parse_config_overrides(items):
+    overrides = {}
+    for item in items or []:
+        if '=' not in item:
+            raise ValueError(f"Invalid --config_override '{item}'. Expected key=value.")
+        key, value = item.split('=', 1)
+        overrides[key] = _parse_override_value(value)
+    return overrides
 
 def _set_logger(log_dir, model_name, dataset_name, verbose_level):
     # base logger
@@ -52,12 +77,22 @@ def DMD_run(
 ):
 
     model_name = model_name.lower()
-    dataset_name = dataset_name.lower()
+    dataset_name = normalize_dataset_name(dataset_name)
+    if model_name != "decalign":
+        raise ValueError("Unsupported model name. The only supported model is 'decalign'.")
 
     if config_file != "":
         config_file = Path(config_file)
     else:  # use default config file
-        config_file = Path(__file__).parent / "config" / "dec_config.json"
+        if dataset_name == "mosi":
+            config_name = "dec_mosi_config.json"
+        elif dataset_name == "mosei":
+            config_name = "dec_mosei_config.json"
+        elif dataset_name == "iemocap":
+            config_name = "iemocap_decalign_config.json"
+        else:
+            config_name = "dec_config.json"
+        config_file = Path(__file__).parent / "config" / config_name
     if not config_file.is_file():
         raise ValueError(f"Config file {str(config_file)} not found.")
 
@@ -106,21 +141,24 @@ def DMD_run(
         df = pd.read_csv(csv_file)
     else:
         df = pd.DataFrame(columns=["Model"] + criterions)
-    res = [model_name]
+    for column in ["Model"] + criterions:
+        if column not in df.columns:
+            df[column] = np.nan
+    res = {"Model": model_name}
     for c in criterions:
         values = [r[c] for r in model_results]
-        mean = round(np.mean(values) * 100, 2)
-        std = round(np.std(values) * 100, 2)
-        res.append((mean, std))
-    df.loc[len(df)] = res
+        mean = float(round(np.mean(values) * 100, 2))
+        std = float(round(np.std(values) * 100, 2))
+        res[c] = (mean, std)
+    df.loc[len(df)] = [res.get(column, np.nan) for column in df.columns]
     df.to_csv(csv_file, index=None)
     logger.info(f"Results saved to {csv_file}.")
 
 
 def _run(args, num_workers=4, is_tune=False, from_sena=False):
     dataloader = MMDataLoader(args, num_workers)
-    # Build DecAlign model
-    model = DecAlign(args)
+    # Build selected model variant.
+    model = build_model(args)
     model = model.cuda()
 
     trainer = DecAlignTrainer(args)
@@ -143,8 +181,10 @@ def _run(args, num_workers=4, is_tune=False, from_sena=False):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='DecAlign: Multimodal Sentiment Analysis')
-    parser.add_argument('--model', type=str, default='decalign', help='Model name')
-    parser.add_argument('--dataset', type=str, default='mosi', choices=['mosi', 'mosei', 'iemocap'],
+    parser.add_argument('--model', type=str, default='decalign', choices=['decalign'], help="Model name; only 'decalign' is supported")
+    parser.add_argument('--config_file', type=str, default='', help='Path to model config JSON')
+    parser.add_argument('--dataset', type=str, default='mosi',
+                        choices=['mosi', 'mosei', 'sims', 'chsims', 'ch-sims', 'ch_sims', 'iemocap'],
                         help='Dataset name')
     parser.add_argument('--data_dir', type=str, default='./data', help='Path to data directory')
     parser.add_argument('--model_save_dir', type=str, default='./pt', help='Directory to save models')
@@ -154,15 +194,36 @@ def parse_args():
     parser.add_argument('--seeds', type=int, nargs='+', default=[1111], help='Random seeds')
     parser.add_argument('--gpu_ids', type=int, nargs='+', default=[0], help='GPU IDs to use')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loader workers')
+    parser.add_argument('--num_epochs', type=int, default=None, help='Override number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=None, help='Override batch size')
+    parser.add_argument('--learning_rate', type=float, default=None, help='Override learning rate')
+    parser.add_argument(
+        '--config_override',
+        action='append',
+        default=[],
+        help='Override any config value with key=value. Can be repeated.',
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    config_overrides = _parse_config_overrides(args.config_override)
+    config_overrides.update({
+        key: value
+        for key, value in {
+            'num_epochs': args.num_epochs,
+            'batch_size': args.batch_size,
+            'learning_rate': args.learning_rate,
+        }.items()
+        if value is not None
+    })
 
     DMD_run(
         model_name=args.model,
         dataset_name=args.dataset,
+        config=config_overrides if config_overrides else None,
+        config_file=args.config_file,
         data_dir=args.data_dir,
         model_save_dir=args.model_save_dir,
         res_save_dir=args.res_save_dir,
