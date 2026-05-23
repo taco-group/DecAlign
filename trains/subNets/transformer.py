@@ -23,25 +23,32 @@ class TransformerEncoder(nn.Module):
             x_in_k (FloatTensor): embedded inputs of shape `(src_len, batch, embed_dim)` for key
             x_in_v (FloatTensor): embedded inputs of shape `(src_len, batch, embed_dim)` for value
         """
+        has_cross_inputs = x_in_k is not None and x_in_v is not None
         x = self.embed_scale * x_in
         x = self.embed_dropout(x)
         
-        if x_in_k is not None and x_in_v is not None:
+        if has_cross_inputs:
             x_k = self.embed_scale * x_in_k
             x_v = self.embed_scale * x_in_v
+            x_k = self.embed_dropout(x_k)
+            x_v = self.embed_dropout(x_v)
         else:
             x_k = x_v = x
         
-        # Create attention mask if needed
+        # The triangular mask is only meaningful for self-attention. Cross-modal
+        # attention can have different source/target lengths, so do not apply it.
         attn_mask = None
-        if self.attn_mask:
+        if self.attn_mask and not has_cross_inputs:
             src_len = x.size(0)
             attn_mask = torch.triu(torch.ones(src_len, src_len), diagonal=1).bool()
             attn_mask = attn_mask.to(x.device)
         
         # Apply transformer layers
         for layer in self.layers:
-            x = layer(x, x_k, x_v, attn_mask)
+            if has_cross_inputs:
+                x = layer(x, x_k, x_v, attn_mask)
+            else:
+                x = layer(x, None, None, attn_mask)
         
         return x
 
@@ -127,8 +134,19 @@ class MultiheadAttention(nn.Module):
         tgt_len, bsz, embed_dim = query.size()
         src_len = key.size(0)
         
-        # Linear projections
-        q, k, v = F.linear(query, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        # Linear projections. Q comes from the target sequence; K/V come from
+        # the source sequence, which enables actual cross-modal attention.
+        q_weight = self.in_proj_weight[:embed_dim]
+        k_weight = self.in_proj_weight[embed_dim:2 * embed_dim]
+        v_weight = self.in_proj_weight[2 * embed_dim:]
+        if self.in_proj_bias is None:
+            q_bias = k_bias = v_bias = None
+        else:
+            q_bias, k_bias, v_bias = self.in_proj_bias.chunk(3)
+
+        q = F.linear(query, q_weight, q_bias)
+        k = F.linear(key, k_weight, k_bias)
+        v = F.linear(value, v_weight, v_bias)
         
         # Reshape for multi-head attention
         q = q.contiguous().view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)

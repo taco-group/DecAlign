@@ -1,52 +1,53 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from trains.subNets import BertTextEncoder
 from trains.subNets.transformer import TransformerEncoder
 
+
+class DistributionEncoder(nn.Module):
+    def __init__(self, input_dim, latent_dim, dropout=0.0):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(input_dim, latent_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class DecAlign(nn.Module):
+    """Paper-faithful DecAlign implementation used as the only public model."""
+
+    allowed_datasets = {"mosi", "mosei", "sims", "iemocap"}
+
     def __init__(self, args):
-        super(DecAlign, self).__init__()
-        # 1. Whether to use BERT encoder
+        super().__init__()
+        if args.dataset_name not in self.allowed_datasets:
+            allowed = "/".join(sorted(self.allowed_datasets))
+            raise ValueError(f"{self.__class__.__name__} is only configured for {allowed}.")
+
         self.use_bert = args.use_bert
         if self.use_bert:
-            self.text_model = BertTextEncoder(use_finetune=args.use_finetune, 
-                                                transformers=args.transformers,
-                                                pretrained=args.pretrained)
-        
-        # 2. Set sequence lengths for each modality based on dataset
-        # Order: len_l=text, len_a=audio, len_v=video
-        if args.dataset_name == 'mosi':
-            if args.need_data_aligned:
-                self.len_l, self.len_a, self.len_v = 50, 50, 50
-            else:
-                self.len_l, self.len_a, self.len_v = 50, 500, 375
-        elif args.dataset_name == 'mosei':
-            if args.need_data_aligned:
-                self.len_l, self.len_a, self.len_v = 50, 50, 50
-            else:
-                self.len_l, self.len_a, self.len_v = 50, 500, 500
-        elif args.dataset_name == 'iemocap':
-            if args.need_data_aligned:
-                self.len_l, self.len_a, self.len_v = 50, 50, 50
-            else:
-                self.len_l, self.len_a, self.len_v = 50, 375, 500
-        else:
-            # Default fallback for unknown datasets
-            self.len_l, self.len_a, self.len_v = 50, 500, 500
-        
-        # 3. Original and target feature dimension settings
+            self.text_model = BertTextEncoder(
+                use_finetune=args.use_finetune,
+                transformers=args.transformers,
+                pretrained=args.pretrained,
+            )
+
         self.orig_d_l, self.orig_d_a, self.orig_d_v = args.feature_dims
-        dst_feature_dims, nheads = args.dst_feature_dim_nheads
-        self.d_l = self.d_a = self.d_v = dst_feature_dims
+        dst_feature_dim, nheads = args.dst_feature_dim_nheads
+        self.d_l = self.d_a = self.d_v = dst_feature_dim
+        self.d_model = dst_feature_dim
         self.num_heads = nheads
         self.layers = args.nlevels
 
-        # Dropout and other hyperparameters
         self.attn_dropout = args.attn_dropout
         self.attn_dropout_a = args.attn_dropout_a
         self.attn_dropout_v = args.attn_dropout_v
@@ -57,348 +58,400 @@ class DecAlign(nn.Module):
         self.text_dropout = args.text_dropout
         self.attn_mask = args.attn_mask
 
-        # 4. Temporal convolutional layers: project initial features for each modality
-        self.proj_l = nn.Conv1d(self.orig_d_l, self.d_l, kernel_size=args.conv1d_kernel_size_l, padding=0, bias=False)
-        self.proj_a = nn.Conv1d(self.orig_d_a, self.d_a, kernel_size=args.conv1d_kernel_size_a, padding=0, bias=False)
-        self.proj_v = nn.Conv1d(self.orig_d_v, self.d_v, kernel_size=args.conv1d_kernel_size_v, padding=0, bias=False)
+        self.proj_l = nn.Conv1d(
+            self.orig_d_l,
+            self.d_model,
+            kernel_size=args.conv1d_kernel_size_l,
+            padding=0,
+            bias=False,
+        )
+        self.proj_a = nn.Conv1d(
+            self.orig_d_a,
+            self.d_model,
+            kernel_size=args.conv1d_kernel_size_a,
+            padding=0,
+            bias=False,
+        )
+        self.proj_v = nn.Conv1d(
+            self.orig_d_v,
+            self.d_model,
+            kernel_size=args.conv1d_kernel_size_v,
+            padding=0,
+            bias=False,
+        )
 
-        # 5. Modality decoupling: extract modality-specific (unique) and modality-common features
-        self.encoder_uni_l = nn.Conv1d(self.d_l, self.d_l, kernel_size=1, padding=0, bias=False)
-        self.encoder_uni_a = nn.Conv1d(self.d_a, self.d_a, kernel_size=1, padding=0, bias=False)
-        self.encoder_uni_v = nn.Conv1d(self.d_v, self.d_v, kernel_size=1, padding=0, bias=False)
-        self.encoder_com   = nn.Conv1d(self.d_l, self.d_l, kernel_size=1, padding=0, bias=False)
+        self.encoder_uni_l = nn.Conv1d(self.d_model, self.d_model, kernel_size=1, bias=False)
+        self.encoder_uni_a = nn.Conv1d(self.d_model, self.d_model, kernel_size=1, bias=False)
+        self.encoder_uni_v = nn.Conv1d(self.d_model, self.d_model, kernel_size=1, bias=False)
+        self.encoder_com = nn.Conv1d(self.d_model, self.d_model, kernel_size=1, bias=False)
 
-        self.proj_cosine_l = nn.Linear(self.d_l * (self.len_l - args.conv1d_kernel_size_l + 1), self.d_l)
-        self.proj_cosine_a = nn.Linear(self.d_a * (self.len_a - args.conv1d_kernel_size_a + 1), self.d_a)
-        self.proj_cosine_v = nn.Linear(self.d_v * (self.len_v - args.conv1d_kernel_size_v + 1), self.d_v)
-
-        # 6. Heterogeneity alignment: based on GMM prototypes and multi-marginal optimal transport
-        # Number of prototypes K
         self.num_prototypes = args.num_prototypes
-        # Prototype means and log-variances for each modality (assuming diagonal covariance)
-        self.proto_l = nn.Parameter(torch.randn(self.num_prototypes, self.d_l))
-        self.proto_a = nn.Parameter(torch.randn(self.num_prototypes, self.d_a))
-        self.proto_v = nn.Parameter(torch.randn(self.num_prototypes, self.d_v))
-        self.logvar_l = nn.Parameter(torch.zeros(self.num_prototypes, self.d_l))
-        self.logvar_a = nn.Parameter(torch.zeros(self.num_prototypes, self.d_a))
-        self.logvar_v = nn.Parameter(torch.zeros(self.num_prototypes, self.d_v))
-        
-        # Multi-marginal optimal transport hyperparameters
-        self.ot_reg = args.lambda_ot if hasattr(args, 'lambda_ot') else 0.1  # Regularization coefficient
-        self.ot_num_iters = args.ot_num_iters if hasattr(args, 'ot_num_iters') else 50  # Sinkhorn iterations
+        self.gmm_em_iters = getattr(args, "gmm_em_iters", 5)
+        self.gmm_var_floor = getattr(args, "gmm_var_floor", 1e-4)
+        self.ot_reg = getattr(args, "lambda_ot", 0.1)
+        self.ot_num_iters = getattr(args, "ot_num_iters", 50)
+        self.hetero_cost_reduction = getattr(args, "hetero_cost_reduction", "mean")
+        self.local_proto_mahalanobis = getattr(args, "local_proto_mahalanobis", False)
+        self.use_sequence_mask = getattr(args, "use_sequence_mask", False)
+        self.use_cross_modal_attention = getattr(args, "use_cross_modal_attention", True)
+        active_modalities = getattr(args, "active_modalities", ["text", "audio", "vision"])
+        if isinstance(active_modalities, str):
+            active_modalities = active_modalities.strip()
+            if active_modalities.startswith("[") and active_modalities.endswith("]"):
+                active_modalities = active_modalities[1:-1]
+            active_modalities = [
+                name.strip().strip("'\"") for name in active_modalities.split(",") if name.strip()
+            ]
+        alias = {"t": "text", "l": "text", "a": "audio", "v": "vision"}
+        self.active_modalities = {
+            alias.get(str(name).lower(), str(name).lower()) for name in active_modalities
+        }
+        unknown_modalities = self.active_modalities.difference({"text", "audio", "vision"})
+        if unknown_modalities:
+            unknown = ", ".join(sorted(unknown_modalities))
+            raise ValueError(f"Unknown active_modalities entries: {unknown}")
+        if not self.active_modalities:
+            raise ValueError("active_modalities must contain at least one modality.")
 
-        # 7. Multimodal fusion - heterogeneity branch: two parallel paths
-        self.transformer_fusion = TransformerEncoder(embed_dim=3 * self.d_l,
-                                                     num_heads=self.num_heads,
-                                                     layers=self.layers,
-                                                     attn_dropout=self.attn_dropout,
-                                                     relu_dropout=self.relu_dropout,
-                                                     res_dropout=self.res_dropout,
-                                                     embed_dropout=self.embed_dropout,
-                                                     attn_mask=self.attn_mask)
-        self.trans_l_with_a = self.get_network(self_type='la')
-        self.trans_l_with_v = self.get_network(self_type='lv')
-        self.trans_a_with_l = self.get_network(self_type='al')
-        self.trans_a_with_v = self.get_network(self_type='av')
-        self.trans_v_with_l = self.get_network(self_type='vl')
-        self.trans_v_with_a = self.get_network(self_type='va')
-        self.trans_l_mem   = self.get_network(self_type='l_mem', layers=3)
-        self.trans_a_mem   = self.get_network(self_type='a_mem', layers=3)
-        self.trans_v_mem   = self.get_network(self_type='v_mem', layers=3)
+        self.trans_l = self._build_transformer(self.attn_dropout)
+        self.trans_a = self._build_transformer(self.attn_dropout_a)
+        self.trans_v = self._build_transformer(self.attn_dropout_v)
 
-        # Project cross-modal attention path output from [N, 6*d_l] to [N, 3*d_l]
-        self.cma_proj = nn.Linear(6 * self.d_l, 3 * self.d_l)
-        
-        # Dynamic output dimension
-        output_dim = 6 if args.dataset_name == 'iemocap' else 1
-        self.out_layer = nn.Linear(6 * self.d_l, output_dim)
+        pde_dim = getattr(args, "pde_dim", self.d_model)
+        self.pde_l = DistributionEncoder(self.d_model, pde_dim, dropout=self.output_dropout)
+        self.pde_a = DistributionEncoder(self.d_model, pde_dim, dropout=self.output_dropout)
+        self.pde_v = DistributionEncoder(self.d_model, pde_dim, dropout=self.output_dropout)
+        self.mmd_bandwidth = getattr(args, "mmd_bandwidth", 1.0)
 
-        # 8. Loss weights
-        self.alpha1 = args.alpha1
-        self.alpha2 = args.alpha2
+        self.out_dropout = nn.Dropout(self.output_dropout)
+        output_dim = int(getattr(args, "num_classes", 1)) if args.train_mode == "classification" else 1
+        self.out_layer = nn.Linear(6 * self.d_model, output_dim)
 
-    def get_network(self, self_type='l', layers=-1):
-        if self_type in ['l', 'al', 'vl']:
-            embed_dim, attn_dropout = self.d_l, self.attn_dropout
-        elif self_type in ['a', 'la', 'va']:
-            embed_dim, attn_dropout = self.d_a, self.attn_dropout_a
-        elif self_type in ['v', 'lv', 'av']:
-            embed_dim, attn_dropout = self.d_v, self.attn_dropout_v
-        elif self_type == 'l_mem':
-            embed_dim, attn_dropout = 2 * self.d_l, self.attn_dropout
-        elif self_type == 'a_mem':
-            embed_dim, attn_dropout = 2 * self.d_a, self.attn_dropout
-        elif self_type == 'v_mem':
-            embed_dim, attn_dropout = 2 * self.d_v, self.attn_dropout
-        else:
-            raise ValueError("Unknown network type")
-        return TransformerEncoder(embed_dim=embed_dim,
-                                  num_heads=self.num_heads,
-                                  layers=max(self.layers, layers),
-                                  attn_dropout=attn_dropout,
-                                  relu_dropout=self.relu_dropout,
-                                  res_dropout=self.res_dropout,
-                                  embed_dropout=self.embed_dropout,
-                                  attn_mask=self.attn_mask)
+    def _build_transformer(self, attn_dropout):
+        return TransformerEncoder(
+            embed_dim=self.d_model,
+            num_heads=self.num_heads,
+            layers=self.layers,
+            attn_dropout=attn_dropout,
+            relu_dropout=self.relu_dropout,
+            res_dropout=self.res_dropout,
+            embed_dropout=self.embed_dropout,
+            attn_mask=self.attn_mask,
+        )
 
+    def _project(self, x, proj, orig_dim):
+        return x if orig_dim == self.d_model else proj(x)
 
-    # -------------------------- Helper Methods --------------------------
+    def _align_mask(self, mask, features):
+        if mask is None:
+            return None
+        mask = mask[:, :, :features.size(2)]
+        if mask.size(2) < features.size(2):
+            pad = features.size(2) - mask.size(2)
+            mask = F.pad(mask, (0, pad), value=0.0)
+        return mask.to(device=features.device, dtype=features.dtype)
+
+    def _pool(self, features, mask=None):
+        mask = self._align_mask(mask, features)
+        if mask is None:
+            return features.mean(dim=2)
+        denom = mask.sum(dim=2).clamp_min(1.0)
+        return (features * mask).sum(dim=2) / denom
+
     def compute_decoupling_loss(self, s, c):
-        # Compute cosine similarity between specific and common features
-        N = s.size(0)  # [N, d, T]
-        s_flat = s.view(N, -1)
-        c_flat = c.view(N, -1)
-        cos_sim = F.cosine_similarity(s_flat, c_flat, dim=1)
-        return cos_sim.mean()
+        batch_size = s.size(0)
+        s_flat = s.reshape(batch_size, -1)
+        c_flat = c.reshape(batch_size, -1)
+        cosine = F.cosine_similarity(s_flat, c_flat, dim=1)
+        return cosine.pow(2).mean()
 
-    def compute_prototypes(self, features, proto, logvar):
-        """
-        Compute soft assignment weights based on distance between sample features and prototypes (means)
-        """
-        N, d, T = features.size()
-        feat_avg = features.mean(dim=2)  # [N, d]
-        diff = feat_avg.unsqueeze(1) - proto.unsqueeze(0)  # [N, K, d]
-        dist_sq = (diff ** 2).sum(dim=2)  # [N, K]
-        w = F.softmax(-dist_sq, dim=1)
-        return w
+    def _init_gmm(self, x):
+        batch_size, dim = x.shape
+        k = self.num_prototypes
+        if batch_size >= k:
+            indices = torch.linspace(0, batch_size - 1, steps=k, device=x.device).round().long()
+            mu = x.index_select(0, indices)
+        else:
+            repeat = math.ceil(k / batch_size)
+            mu = x.repeat(repeat, 1)[:k]
 
-    def pairwise_cost(self, mu1, logvar1, mu2, logvar2, eps=1e-9):
-        """
-        Compute pairwise cost between two sets of prototypes: Euclidean distance + covariance matching cost
-        """
-        # Euclidean distance between means
-        diff = mu1.unsqueeze(1) - mu2.unsqueeze(0)  # [K, K, d]
-        dist_sq = torch.sum(diff ** 2, dim=2)  # [K, K]
-        # Covariance part: assuming diagonal covariance, sigma = exp(logvar)
-        sigma1 = torch.exp(logvar1)
-        sigma2 = torch.exp(logvar2)
-        # Diagonal covariance matching cost
-        cov_term = torch.sum(sigma1.unsqueeze(1) + sigma2.unsqueeze(0) - 
-                             2 * torch.sqrt(sigma1.unsqueeze(1) * sigma2.unsqueeze(0) + eps), dim=2)
-        return dist_sq + cov_term
+        var = x.var(dim=0, unbiased=False).clamp_min(self.gmm_var_floor)
+        var = var.unsqueeze(0).expand(k, dim).clone()
+        pi = torch.full((k,), 1.0 / k, device=x.device, dtype=x.dtype)
+        return pi, mu, var
 
-    def multi_marginal_sinkhorn(self, C, nu_l, nu_a, nu_v, reg, num_iters=50, eps=1e-9):
-        """
-        Solve the three-modality optimal transport problem using multi-marginal Sinkhorn algorithm
-        Args:
-          - C: Joint cost tensor of shape [K, K, K]
-          - nu_l, nu_a, nu_v: Marginal distributions over prototypes for text, audio, video (vectors, shape [K])
-          - reg: Regularization parameter (entropy regularization coefficient)
-          - num_iters: Number of Sinkhorn iterations
-        Returns:
-          - T: Joint transport matrix of shape [K, K, K]
-          - ot_loss: Optimal transport loss value
-        """
-        K = C.size(0)
-        # Compute kernel matrix
-        K_tensor = torch.exp(-C / reg)  # [K, K, K]
-        # Initialize scaling factors
-        u = torch.ones(K, device=C.device)
-        v = torch.ones(K, device=C.device)
-        w = torch.ones(K, device=C.device)
-        for _ in range(num_iters):
-            u = nu_l / (torch.sum(K_tensor * v.view(1, K, 1) * w.view(1, 1, K), dim=(1,2)) + eps)
-            v = nu_a / (torch.sum(K_tensor * u.view(K,1,1) * w.view(1,1,K), dim=(0,2)) + eps)
-            w = nu_v / (torch.sum(K_tensor * u.view(K,1,1) * v.view(1,K,1), dim=(0,1)) + eps)
-        # Compute joint transport matrix T
-        T = (u.view(K,1,1) * v.view(1,K,1) * w.view(1,1,K)) * K_tensor
-        # Compute OT loss (including entropy regularization term)
-        ot_loss = torch.sum(T * C)
-        entropy = - torch.sum(T * torch.log(T + eps))
-        ot_loss = ot_loss + 0.001 * reg * entropy
-        return T, ot_loss
+    def _gmm_log_prob(self, x, pi, mu, var):
+        diff = x.unsqueeze(1) - mu.unsqueeze(0)
+        mahalanobis = (diff.pow(2) / var.unsqueeze(0)).sum(dim=2)
+        log_det = var.log().sum(dim=1).unsqueeze(0)
+        log_norm = x.size(1) * math.log(2.0 * math.pi)
+        return pi.clamp_min(1e-8).log().unsqueeze(0) - 0.5 * (mahalanobis + log_det + log_norm)
 
-    def compute_hetero_loss(self, s_l, s_a, s_v):
-        """
-        Heterogeneity alignment loss:
-          - Compute soft assignment weights between samples and prototypes via GMM
-          - Construct marginal distributions over prototypes using mean assignments
-          - Build joint cost tensor between cross-modal prototypes and solve OT loss via multi-marginal Sinkhorn
-          - Also compute local alignment loss between samples and other modality prototypes
-        """
-        # 1. Compute soft assignment weights for each modality
-        w_l = self.compute_prototypes(s_l, self.proto_l, self.logvar_l)  # [N, K]
-        w_a = self.compute_prototypes(s_a, self.proto_a, self.logvar_a)  # [N, K]
-        w_v = self.compute_prototypes(s_v, self.proto_v, self.logvar_v)  # [N, K]
+    def _fit_gmm_em(self, x):
+        pi, mu, var = self._init_gmm(x)
+        for _ in range(self.gmm_em_iters):
+            gamma = F.softmax(self._gmm_log_prob(x, pi, mu, var), dim=1)
+            nk = gamma.sum(dim=0).clamp_min(1e-6)
+            pi = nk / x.size(0)
+            mu = gamma.transpose(0, 1).matmul(x) / nk.unsqueeze(1)
+            second_moment = gamma.transpose(0, 1).matmul(x.pow(2)) / nk.unsqueeze(1)
+            var = (second_moment - mu.pow(2)).clamp_min(self.gmm_var_floor)
+        gamma = F.softmax(self._gmm_log_prob(x, pi, mu, var), dim=1)
+        return {"pi": pi, "mu": mu, "var": var, "posterior": gamma}
 
-        # 2. Compute marginal distribution over prototypes (average and normalize)
-        nu_l = w_l.mean(dim=0)  # [K]
-        nu_a = w_a.mean(dim=0)  # [K]
-        nu_v = w_v.mean(dim=0)  # [K]
-        eps = 1e-9
-        nu_l = nu_l / (nu_l.sum() + eps)
-        nu_a = nu_a / (nu_a.sum() + eps)
-        nu_v = nu_v / (nu_v.sum() + eps)
+    def _gaussian_cost(self, mu1, var1, mu2, var2):
+        diff = mu1.unsqueeze(1) - mu2.unsqueeze(0)
+        reduce_fn = torch.sum if self.hetero_cost_reduction == "sum" else torch.mean
+        mean_cost = reduce_fn(diff.pow(2), dim=2)
+        cov_cost = (
+            var1.unsqueeze(1)
+            + var2.unsqueeze(0)
+            - 2.0 * torch.sqrt(var1.unsqueeze(1) * var2.unsqueeze(0) + 1e-8)
+        )
+        cov_cost = reduce_fn(cov_cost, dim=2)
+        return mean_cost + cov_cost
 
-        # 3. Construct pairwise cost matrices between modalities
-        cost_la = self.pairwise_cost(self.proto_l, self.logvar_l, self.proto_a, self.logvar_a, eps=eps)  # [K, K]
-        cost_lv = self.pairwise_cost(self.proto_l, self.logvar_l, self.proto_v, self.logvar_v, eps=eps)  # [K, K]
-        cost_av = self.pairwise_cost(self.proto_a, self.logvar_a, self.proto_v, self.logvar_v, eps=eps)  # [K, K]
-        # Construct joint cost tensor: sum of pairwise costs for three modalities
-        # C[i,j,k] = cost_la[i,j] + cost_lv[i,k] + cost_av[j,k]
-        C = cost_la.unsqueeze(2) + cost_lv.unsqueeze(1) + cost_av.unsqueeze(0)  # [K, K, K]
+    def _sample_to_proto_cost(self, x, mu, var):
+        diff = x.unsqueeze(1) - mu.unsqueeze(0)
+        cost = diff.pow(2)
+        if self.local_proto_mahalanobis:
+            cost = cost / var.unsqueeze(0).clamp_min(self.gmm_var_floor)
+        if self.hetero_cost_reduction == "sum":
+            return cost.sum(dim=2)
+        return cost.mean(dim=2)
 
-        # 4. Solve optimal transport problem using multi-marginal Sinkhorn
-        _, ot_loss = self.multi_marginal_sinkhorn(C, nu_l, nu_a, nu_v, reg=self.ot_reg, num_iters=self.ot_num_iters)
+    def _multi_marginal_sinkhorn(self, cost, nu_l, nu_a, nu_v):
+        k = cost.size(0)
+        kernel = torch.exp(-cost / max(self.ot_reg, 1e-6)).clamp_min(1e-30)
+        u = torch.ones(k, device=cost.device, dtype=cost.dtype)
+        v = torch.ones_like(u)
+        w = torch.ones_like(u)
 
-        # 5. Local prototype alignment loss: weighted Euclidean distance between samples and other modality prototypes
-        feat_l = s_l.mean(dim=2)  # [N, d]
-        feat_a = s_a.mean(dim=2)
-        feat_v = s_v.mean(dim=2)
-        loss_la = torch.mean(w_l * torch.sum((feat_l.unsqueeze(1) - self.proto_a.unsqueeze(0)) ** 2, dim=2))
-        loss_lv = torch.mean(w_l * torch.sum((feat_l.unsqueeze(1) - self.proto_v.unsqueeze(0)) ** 2, dim=2))
-        loss_al = torch.mean(w_a * torch.sum((feat_a.unsqueeze(1) - self.proto_l.unsqueeze(0)) ** 2, dim=2))
-        loss_av = torch.mean(w_a * torch.sum((feat_a.unsqueeze(1) - self.proto_v.unsqueeze(0)) ** 2, dim=2))
-        loss_vl = torch.mean(w_v * torch.sum((feat_v.unsqueeze(1) - self.proto_l.unsqueeze(0)) ** 2, dim=2))
-        loss_va = torch.mean(w_v * torch.sum((feat_v.unsqueeze(1) - self.proto_a.unsqueeze(0)) ** 2, dim=2))
-        local_proto_loss = loss_la + loss_lv + loss_al + loss_av + loss_vl + loss_va
+        for _ in range(self.ot_num_iters):
+            u = nu_l / (torch.sum(kernel * v.view(1, k, 1) * w.view(1, 1, k), dim=(1, 2)) + 1e-8)
+            v = nu_a / (torch.sum(kernel * u.view(k, 1, 1) * w.view(1, 1, k), dim=(0, 2)) + 1e-8)
+            w = nu_v / (torch.sum(kernel * u.view(k, 1, 1) * v.view(1, k, 1), dim=(0, 1)) + 1e-8)
 
-        hetero_loss = ot_loss + local_proto_loss
-        return hetero_loss
+        plan = u.view(k, 1, 1) * v.view(1, k, 1) * w.view(1, 1, k) * kernel
+        entropy = (plan * (plan.clamp_min(1e-8).log() - 1.0)).sum()
+        return (plan * cost).sum() + self.ot_reg * entropy
 
-    def compute_mmd(self, x, y, kernel_bandwidth=1.0):
-        xx = torch.mm(x, x.t())
-        yy = torch.mm(y, y.t())
-        xy = torch.mm(x, y.t())
-        rx = xx.diag().unsqueeze(0).expand_as(xx)
-        ry = yy.diag().unsqueeze(0).expand_as(yy)
-        K_xx = torch.exp(- (rx.t() + rx - 2 * xx) / (2 * kernel_bandwidth))
-        K_yy = torch.exp(- (ry.t() + ry - 2 * yy) / (2 * kernel_bandwidth))
-        K_xy = torch.exp(- (rx.t() + ry - 2 * xy) / (2 * kernel_bandwidth))
-        mmd = K_xx.mean() + K_yy.mean() - 2 * K_xy.mean()
-        return mmd
+    def compute_hetero_loss(self, s_l, s_a, s_v, masks=None):
+        mask_l, mask_a, mask_v = masks or (None, None, None)
+        x_l = self._pool(s_l, mask_l)
+        x_a = self._pool(s_a, mask_a)
+        x_v = self._pool(s_v, mask_v)
 
-    def compute_homo_loss(self, c_l, c_a, c_v):
-        def compute_stats(c):
-            mu = c.mean(dim=(0,2))
-            sigma = c.var(dim=(0,2))
-            centered = c - mu.view(1, -1, 1)
-            skew = (centered ** 3).mean(dim=(0,2)) / (sigma + 1e-6).pow(1.5)
-            return mu, sigma, skew
+        g_l = self._fit_gmm_em(x_l)
+        g_a = self._fit_gmm_em(x_a)
+        g_v = self._fit_gmm_em(x_v)
 
-        mu_l, sigma_l, skew_l = compute_stats(c_l)
-        mu_a, sigma_a, skew_a = compute_stats(c_a)
-        mu_v, sigma_v, skew_v = compute_stats(c_v)
-        L_sem = ((mu_l - mu_a).pow(2).sum() + (mu_l - mu_v).pow(2).sum() + (mu_a - mu_v).pow(2).sum() +
-                 (sigma_l - sigma_a).pow(2).sum() + (sigma_l - sigma_v).pow(2).sum() + (sigma_a - sigma_v).pow(2).sum() +
-                 (skew_l - skew_a).pow(2).sum() + (skew_l - skew_v).pow(2).sum() + (skew_a - skew_v).pow(2).sum())
-        c_l_pool = c_l.mean(dim=2)
-        c_a_pool = c_a.mean(dim=2)
-        c_v_pool = c_v.mean(dim=2)
-        mmd_la = self.compute_mmd(c_l_pool, c_a_pool)
-        mmd_lv = self.compute_mmd(c_l_pool, c_v_pool)
-        mmd_av = self.compute_mmd(c_a_pool, c_v_pool)
-        L_mmd = mmd_la + mmd_lv + mmd_av
-        homo_loss = L_sem + L_mmd
-        return homo_loss
+        nu_l = g_l["posterior"].mean(dim=0)
+        nu_a = g_a["posterior"].mean(dim=0)
+        nu_v = g_v["posterior"].mean(dim=0)
+        nu_l = nu_l / nu_l.sum().clamp_min(1e-8)
+        nu_a = nu_a / nu_a.sum().clamp_min(1e-8)
+        nu_v = nu_v / nu_v.sum().clamp_min(1e-8)
 
-    # -------------------------- Forward Pass --------------------------
+        cost_la = self._gaussian_cost(g_l["mu"], g_l["var"], g_a["mu"], g_a["var"])
+        cost_lv = self._gaussian_cost(g_l["mu"], g_l["var"], g_v["mu"], g_v["var"])
+        cost_av = self._gaussian_cost(g_a["mu"], g_a["var"], g_v["mu"], g_v["var"])
+        joint_cost = cost_la.unsqueeze(2) + cost_lv.unsqueeze(1) + cost_av.unsqueeze(0)
+        ot_loss = self._multi_marginal_sinkhorn(joint_cost, nu_l, nu_a, nu_v)
+
+        local_losses = [
+            (g_l["posterior"] * self._sample_to_proto_cost(x_l, g_a["mu"], g_a["var"])).sum(dim=1).mean(),
+            (g_l["posterior"] * self._sample_to_proto_cost(x_l, g_v["mu"], g_v["var"])).sum(dim=1).mean(),
+            (g_a["posterior"] * self._sample_to_proto_cost(x_a, g_l["mu"], g_l["var"])).sum(dim=1).mean(),
+            (g_a["posterior"] * self._sample_to_proto_cost(x_a, g_v["mu"], g_v["var"])).sum(dim=1).mean(),
+            (g_v["posterior"] * self._sample_to_proto_cost(x_v, g_l["mu"], g_l["var"])).sum(dim=1).mean(),
+            (g_v["posterior"] * self._sample_to_proto_cost(x_v, g_a["mu"], g_a["var"])).sum(dim=1).mean(),
+        ]
+        local_proto_loss = torch.stack(local_losses).mean()
+        return ot_loss + local_proto_loss
+
+    def _distribution_stats(self, z):
+        mu = z.mean(dim=0)
+        centered = z - mu
+        denom = max(z.size(0) - 1, 1)
+        cov = centered.transpose(0, 1).matmul(centered) / denom
+        var = centered.pow(2).mean(dim=0).clamp_min(1e-6)
+        skew = centered.pow(3).mean(dim=0) / var.pow(1.5)
+        return mu, cov, skew
+
+    def _stats_distance(self, stats_x, stats_y):
+        mu_x, cov_x, skew_x = stats_x
+        mu_y, cov_y, skew_y = stats_y
+        return (
+            F.mse_loss(mu_x, mu_y)
+            + F.mse_loss(cov_x, cov_y)
+            + F.mse_loss(skew_x, skew_y)
+        )
+
+    def compute_mmd(self, x, y):
+        x_norm = (x.pow(2).sum(dim=1, keepdim=True))
+        y_norm = (y.pow(2).sum(dim=1, keepdim=True))
+        dist_xx = x_norm + x_norm.transpose(0, 1) - 2.0 * x.matmul(x.transpose(0, 1))
+        dist_yy = y_norm + y_norm.transpose(0, 1) - 2.0 * y.matmul(y.transpose(0, 1))
+        dist_xy = x_norm + y_norm.transpose(0, 1) - 2.0 * x.matmul(y.transpose(0, 1))
+        gamma = 1.0 / (2.0 * self.mmd_bandwidth)
+        return (
+            torch.exp(-gamma * dist_xx.clamp_min(0.0)).mean()
+            + torch.exp(-gamma * dist_yy.clamp_min(0.0)).mean()
+            - 2.0 * torch.exp(-gamma * dist_xy.clamp_min(0.0)).mean()
+        )
+
+    def compute_homo_loss(self, c_l, c_a, c_v, masks=None):
+        mask_l, mask_a, mask_v = masks or (None, None, None)
+        z_l = self.pde_l(self._pool(c_l, mask_l))
+        z_a = self.pde_a(self._pool(c_a, mask_a))
+        z_v = self.pde_v(self._pool(c_v, mask_v))
+
+        stats_l = self._distribution_stats(z_l)
+        stats_a = self._distribution_stats(z_a)
+        stats_v = self._distribution_stats(z_v)
+        sem_loss = (
+            self._stats_distance(stats_l, stats_a)
+            + self._stats_distance(stats_l, stats_v)
+            + self._stats_distance(stats_a, stats_v)
+        ) / 3.0
+        mmd_loss = (
+            self.compute_mmd(z_l, z_a)
+            + self.compute_mmd(z_l, z_v)
+            + self.compute_mmd(z_a, z_v)
+        ) / 3.0
+        return sem_loss + mmd_loss, (z_l, z_a, z_v)
+
+    def _transform_and_pool(self, transformer, features, mask=None, context_features=None):
+        sequence = features.permute(2, 0, 1)
+        if context_features:
+            context = torch.cat([item.permute(2, 0, 1) for item in context_features], dim=0)
+            encoded = transformer(sequence, context, context)
+        else:
+            encoded = transformer(sequence)
+        encoded = encoded.permute(1, 2, 0)
+        return self._pool(encoded, mask)
+
+    def _cross_context(self, name, features_by_modality, active):
+        if not self.use_cross_modal_attention:
+            return None
+        context = [
+            features
+            for modality, features in features_by_modality.items()
+            if modality != name and modality in active
+        ]
+        return context or None
+
+    def _input_masks(self, text_input, audio, video):
+        if not self.use_sequence_mask:
+            return None, None, None
+        text_mask = None
+        if text_input.ndim == 3 and text_input.shape[1] == 3 and text_input.dtype in (torch.long, torch.int, torch.int64):
+            row_1 = text_input[:, 1, :]
+            row_2 = text_input[:, 2, :]
+            text_mask = row_1 if row_2.sum() == 0 or row_1.sum() >= row_2.sum() else row_2
+            text_mask = text_mask.unsqueeze(1).float()
+        audio_mask = audio.abs().sum(dim=2).gt(0).unsqueeze(1).float()
+        video_mask = video.abs().sum(dim=2).gt(0).unsqueeze(1).float()
+        return text_mask, audio_mask, video_mask
+
     def forward(self, text, audio, video, is_distill=False):
-        # 1. Text modality encoding (if using BERT)
+        input_masks = self._input_masks(text, audio, video)
         if self.use_bert:
             text = self.text_model(text)
+
         x_l = F.dropout(text.transpose(1, 2), p=self.text_dropout, training=self.training)
         x_a = audio.transpose(1, 2)
         x_v = video.transpose(1, 2)
 
-        # 2. Initial feature projection
-        proj_x_l = x_l if self.orig_d_l == self.d_l else self.proj_l(x_l)
-        proj_x_a = x_a if self.orig_d_a == self.d_a else self.proj_a(x_a)
-        proj_x_v = x_v if self.orig_d_v == self.d_v else self.proj_v(x_v)
+        proj_l = self._project(x_l, self.proj_l, self.orig_d_l)
+        proj_a = self._project(x_a, self.proj_a, self.orig_d_a)
+        proj_v = self._project(x_v, self.proj_v, self.orig_d_v)
+        mask_l, mask_a, mask_v = [self._align_mask(mask, proj) for mask, proj in zip(input_masks, (proj_l, proj_a, proj_v))]
+        if self.use_sequence_mask:
+            proj_l = proj_l * mask_l if mask_l is not None else proj_l
+            proj_a = proj_a * mask_a if mask_a is not None else proj_a
+            proj_v = proj_v * mask_v if mask_v is not None else proj_v
 
-        # 3. Decoupling: extract modality-specific (s_*) and common (c_*) features
-        s_l = self.encoder_uni_l(proj_x_l)  # [N, d_l, T_l']
-        s_a = self.encoder_uni_a(proj_x_a)  # [N, d_a, T_a']
-        s_v = self.encoder_uni_v(proj_x_v)  # [N, d_v, T_v']
-        c_l = self.encoder_com(proj_x_l)
-        c_a = self.encoder_com(proj_x_a)
-        c_v = self.encoder_com(proj_x_v)
+        s_l = self.encoder_uni_l(proj_l)
+        s_a = self.encoder_uni_a(proj_a)
+        s_v = self.encoder_uni_v(proj_v)
+        c_l = self.encoder_com(proj_l)
+        c_a = self.encoder_com(proj_a)
+        c_v = self.encoder_com(proj_v)
 
-        # 4. Decoupling loss
-        dec_loss = (self.compute_decoupling_loss(s_l, c_l) +
-                    self.compute_decoupling_loss(s_a, c_a) +
-                    self.compute_decoupling_loss(s_v, c_v))
+        active = self.active_modalities
+        zero = proj_l.new_tensor(0.0)
+        dec_terms = []
+        if "text" in active:
+            dec_terms.append(self.compute_decoupling_loss(s_l, c_l))
+        if "audio" in active:
+            dec_terms.append(self.compute_decoupling_loss(s_a, c_a))
+        if "vision" in active:
+            dec_terms.append(self.compute_decoupling_loss(s_v, c_v))
+        dec_loss = torch.stack(dec_terms).mean() if dec_terms else zero
+        masks = (mask_l, mask_a, mask_v)
+        if len(active) == 3:
+            hete_loss = self.compute_hetero_loss(s_l, s_a, s_v, masks=masks)
+            homo_loss, z_common = self.compute_homo_loss(c_l, c_a, c_v, masks=masks)
+        else:
+            hete_loss = zero
+            homo_loss = zero
+            z_common = (None, None, None)
 
-        # 5. Heterogeneity alignment loss (based on s_*, includes multi-marginal OT)
-        hete_loss = self.compute_hetero_loss(s_l, s_a, s_v)
+        batch_size = text.size(0)
+        empty = proj_l.new_zeros(batch_size, self.d_model)
+        s_features = {"text": s_l, "audio": s_a, "vision": s_v}
+        h_l = (
+            self._transform_and_pool(
+                self.trans_l,
+                s_l,
+                mask_l,
+                self._cross_context("text", s_features, active),
+            )
+            if "text" in active
+            else empty
+        )
+        h_a = (
+            self._transform_and_pool(
+                self.trans_a,
+                s_a,
+                mask_a,
+                self._cross_context("audio", s_features, active),
+            )
+            if "audio" in active
+            else empty
+        )
+        h_v = (
+            self._transform_and_pool(
+                self.trans_v,
+                s_v,
+                mask_v,
+                self._cross_context("vision", s_features, active),
+            )
+            if "vision" in active
+            else empty
+        )
+        c_l_avg = self._pool(c_l, mask_l) if "text" in active else empty
+        c_a_avg = self._pool(c_a, mask_a) if "audio" in active else empty
+        c_v_avg = self._pool(c_v, mask_v) if "vision" in active else empty
 
-        # 6. Homogeneity alignment loss (based on c_*)
-        homo_loss = self.compute_homo_loss(c_l, c_a, c_v)
+        final_rep = torch.cat([h_l, h_a, h_v, c_l_avg, c_a_avg, c_v_avg], dim=1)
+        output = self.out_layer(self.out_dropout(final_rep))
 
-        # 7. Heterogeneity branch - two parallel paths
-        ## 7.1 Transformer fusion path: temporal modeling on s_*
-        s_l_perm = s_l.permute(2, 0, 1)  # [T_l, N, d_l]
-        s_a_perm = s_a.permute(2, 0, 1)  # [T_a, N, d_a]
-        s_v_perm = s_v.permute(2, 0, 1)  # [T_v, N, d_v]
-        T_target = min(s_l_perm.size(0), s_a_perm.size(0), s_v_perm.size(0))
-        s_l_perm = s_l_perm[:T_target, :, :]
-        s_a_perm = s_a_perm[:T_target, :, :]
-        s_v_perm = s_v_perm[:T_target, :, :]
-        fused_hetero_trans = torch.cat([s_l_perm, s_a_perm, s_v_perm], dim=2)  # [T_target, N, 3*d_l]
-        trans_out = self.transformer_fusion(fused_hetero_trans)  # [T_target, N, 3*d_l]
-        fusion_rep_trans = trans_out[-1]
-
-        ## 7.2 Cross-modal attention path: information interaction via cross-attention modules
-        s_l_perm = s_l.permute(2, 0, 1)
-        s_a_perm = s_a.permute(2, 0, 1)
-        s_v_perm = s_v.permute(2, 0, 1)
-        T_target = min(s_l_perm.size(0), s_a_perm.size(0), s_v_perm.size(0))
-        s_l_perm = s_l_perm[:T_target, :, :]
-        s_a_perm = s_a_perm[:T_target, :, :]
-        s_v_perm = s_v_perm[:T_target, :, :]
-        # (V,A) -> L
-        h_l_with_as = self.trans_l_with_a(s_l_perm, s_a_perm, s_a_perm)
-        h_l_with_vs = self.trans_l_with_v(s_l_perm, s_v_perm, s_v_perm)
-        h_ls = torch.cat([h_l_with_as, h_l_with_vs], dim=2)
-        h_ls = self.trans_l_mem(h_ls)
-        if isinstance(h_ls, tuple):
-            h_ls = h_ls[0]
-        last_h_l = h_ls[-1]
-        # (L,V) -> A
-        h_a_with_ls = self.trans_a_with_l(s_a_perm, s_l_perm, s_l_perm)
-        h_a_with_vs = self.trans_a_with_v(s_a_perm, s_v_perm, s_v_perm)
-        h_as = torch.cat([h_a_with_ls, h_a_with_vs], dim=2)
-        h_as = self.trans_a_mem(h_as)
-        if isinstance(h_as, tuple):
-            h_as = h_as[0]
-        last_h_a = h_as[-1]
-        # (L,A) -> V
-        h_v_with_ls = self.trans_v_with_l(s_v_perm, s_l_perm, s_l_perm)
-        h_v_with_as = self.trans_v_with_a(s_v_perm, s_a_perm, s_a_perm)
-        h_vs = torch.cat([h_v_with_ls, h_v_with_as], dim=2)
-        h_vs = self.trans_v_mem(h_vs)
-        if isinstance(h_vs, tuple):
-            h_vs = h_vs[0]
-        last_h_v = h_vs[-1]
-        fusion_rep_cma = torch.cat([last_h_l, last_h_a, last_h_v], dim=1)  # [N, 6*d_l]
-        fusion_rep_cma = self.cma_proj(fusion_rep_cma)  # [N, 3*d_l]
-
-        ## 7.3 Homogeneity branch: average pooling over time dimension
-        c_l_avg = c_l.mean(dim=2)  # [N, d_l]
-        c_a_avg = c_a.mean(dim=2)  # [N, d_a]
-        c_v_avg = c_v.mean(dim=2)  # [N, d_v]
-        fusion_rep_homo = torch.cat([c_l_avg, c_a_avg, c_v_avg], dim=1)  # [N, 3*d_l]
-
-        ## 7.4 Fuse heterogeneous paths and concatenate with homogeneous
-        fusion_rep_hete = fusion_rep_trans + fusion_rep_cma  # [N, 3*d_l]
-        final_rep = torch.cat([fusion_rep_hete, fusion_rep_homo], dim=1)  # [N, 6*d_l]
-        output = self.out_layer(final_rep)
-
-        res = {
-            'output_logit': output,
-            'dec_loss': dec_loss,
-            'hete_loss': hete_loss,
-            'homo_loss': homo_loss,
-            's_l': s_l,
-            's_a': s_a,
-            's_v': s_v,
-            'c_l': c_l,
-            'c_a': c_a,
-            'c_v': c_v,
-            'fusion_rep_trans': fusion_rep_trans,
-            'fusion_rep_cma': fusion_rep_cma,
-            'fusion_rep_hete': fusion_rep_hete,
-            'fusion_rep_homo': fusion_rep_homo,
-            'final_rep': final_rep
+        return {
+            "output_logit": output,
+            "dec_loss": dec_loss,
+            "hete_loss": hete_loss,
+            "homo_loss": homo_loss,
+            "s_l": s_l,
+            "s_a": s_a,
+            "s_v": s_v,
+            "c_l": c_l,
+            "c_a": c_a,
+            "c_v": c_v,
+            "z_common": z_common,
+            "fusion_rep_hete": torch.cat([h_l, h_a, h_v], dim=1),
+            "fusion_rep_homo": torch.cat([c_l_avg, c_a_avg, c_v_avg], dim=1),
+            "final_rep": final_rep,
         }
-        return res

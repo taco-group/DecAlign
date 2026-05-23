@@ -14,6 +14,7 @@ class MMDataset(Dataset):
         DATASET_MAP = {
             'mosi': self.__init_mosi,
             'mosei': self.__init_mosei,
+            'sims': self.__init_sims,
             'iemocap': self.__init_iemocap,
         }
         DATASET_MAP[args.dataset_name]()
@@ -68,6 +69,11 @@ class MMDataset(Dataset):
         self.labels = {
             'M': np.array(data[self.mode]['regression_labels']).astype(np.float32)
         }
+        if self.args.dataset_name == 'sims':
+            for modality in "TAV":
+                key = f"regression_labels_{modality}"
+                if key in data[self.mode]:
+                    self.labels[modality] = np.array(data[self.mode][key]).astype(np.float32)
 
         logger.info(f"{self.mode} samples: {self.labels['M'].shape}")
 
@@ -89,6 +95,11 @@ class MMDataset(Dataset):
 
         # Clean up inf values
         self.audio[self.audio == -np.inf] = 0
+        self.audio = np.nan_to_num(self.audio, nan=0.0, posinf=0.0, neginf=0.0)
+        self.vision = np.nan_to_num(self.vision, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if getattr(self.args, 'need_feature_standardized', False):
+            self.__standardize_features()
 
         if getattr(self.args, 'need_normalized', False):
             self.__normalize()
@@ -96,33 +107,67 @@ class MMDataset(Dataset):
     def __init_mosei(self):
         return self.__init_mosi()
 
+    def __init_sims(self):
+        return self.__init_mosi()
+
+    def __merge_splits(self, data, split_names):
+        merged = {}
+        for key in data[split_names[0]].keys():
+            values = [data[split][key] for split in split_names]
+            if isinstance(values[0], np.ndarray):
+                merged[key] = np.concatenate(values, axis=0)
+            elif isinstance(values[0], list):
+                merged[key] = sum((list(value) for value in values), [])
+            else:
+                try:
+                    merged[key] = np.concatenate(values, axis=0)
+                except Exception:
+                    merged[key] = values
+        return merged
+
+    def __select_iemocap_split(self, data):
+        protocol = getattr(self.args, 'iemocap_protocol', 'session_valid')
+        if protocol == 'session_valid':
+            return data[self.mode]
+        if protocol == 'paper_count':
+            if self.mode == 'train':
+                return self.__merge_splits(data, ['train', 'valid'])
+            return data['test']
+        raise ValueError(f"Unknown IEMOCAP protocol: {protocol}")
+
     def __init_iemocap(self):
         with open(self.args.featurePath, 'rb') as f:
             data = pickle.load(f)
+        split = self.__select_iemocap_split(data)
 
         if getattr(self.args, 'use_bert', False):
-            text_bert = data[self.mode]['text_bert']
+            text_bert = split['text_bert']
             if text_bert.ndim == 3 and text_bert.shape[1] == 3 and np.issubdtype(text_bert.dtype, np.integer):
                 self.text = text_bert  # keep int64 for BERT tokenizer input
             else:
                 self.text = text_bert.astype(np.float32)
         else:
-            self.text = data[self.mode]['text'].astype(np.float32)
+            self.text = split['text'].astype(np.float32)
 
-        self.vision = data[self.mode]['vision'].astype(np.float32)
-        self.audio = data[self.mode]['audio'].astype(np.float32)
-        self.raw_text = data[self.mode]['raw_text']
-        self.ids = data[self.mode]['id']
+        self.vision = split['vision'].astype(np.float32)
+        self.audio = split['audio'].astype(np.float32)
+        self.raw_text = split['raw_text']
+        self.ids = split['id']
 
         # For IEMOCAP, labels are emotion categories
         self.labels = {
-            'M': np.array(data[self.mode]['classification_labels']).astype(np.float32)
+            'M': np.array(split['classification_labels']).astype(np.float32)
         }
 
         logger.info(f"{self.mode} samples: {self.labels['M'].shape}")
 
         # Clean up inf values
         self.audio[self.audio == -np.inf] = 0
+        self.audio = np.nan_to_num(self.audio, nan=0.0, posinf=0.0, neginf=0.0)
+        self.vision = np.nan_to_num(self.vision, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if getattr(self.args, 'need_feature_standardized', False):
+            self.__standardize_features()
 
     def __normalize(self):
         """Normalize features"""
@@ -137,6 +182,36 @@ class MMDataset(Dataset):
 
         self.vision = np.transpose(self.vision, (1, 0, 2))
         self.audio = np.transpose(self.audio, (1, 0, 2))
+
+    def __standardize_features(self):
+        modalities = getattr(self.args, 'feature_standardize_modalities', ['audio', 'vision'])
+        clip_percentiles = getattr(self.args, 'feature_clip_percentiles', [0.5, 99.5])
+        if len(clip_percentiles) != 2:
+            raise ValueError("feature_clip_percentiles must contain [low, high].")
+
+        stats = getattr(self.args, '_feature_standardization_stats', None)
+        if stats is None:
+            stats = {}
+            setattr(self.args, '_feature_standardization_stats', stats)
+
+        for name in modalities:
+            features = getattr(self, name).astype(np.float32, copy=False)
+            if self.mode == 'train' or name not in stats:
+                low, high = np.percentile(features, clip_percentiles, axis=(0, 1), keepdims=True)
+                clipped = np.clip(features, low, high)
+                mean = clipped.mean(axis=(0, 1), keepdims=True)
+                std = clipped.std(axis=(0, 1), keepdims=True)
+                stats[name] = {
+                    'low': low.astype(np.float32),
+                    'high': high.astype(np.float32),
+                    'mean': mean.astype(np.float32),
+                    'std': np.maximum(std, 1e-6).astype(np.float32),
+                }
+
+            modal_stats = stats[name]
+            standardized = np.clip(features, modal_stats['low'], modal_stats['high'])
+            standardized = (standardized - modal_stats['mean']) / modal_stats['std']
+            setattr(self, name, np.nan_to_num(standardized, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32))
 
     def __len__(self):
         return len(self.labels['M'])
@@ -206,6 +281,18 @@ def MMDataLoader(args, num_workers=4):
     feature_dims = datasets['train'].get_feature_dim()
     args.feature_dims = list(feature_dims)
     logger.info(f"Feature dimensions: Text={feature_dims[0]}, Audio={feature_dims[1]}, Vision={feature_dims[2]}")
+
+    if getattr(args, 'train_mode', '') == 'classification':
+        train_labels = datasets['train'].labels['M'].astype(np.int64).reshape(-1)
+        num_classes = int(getattr(args, 'num_classes', int(train_labels.max()) + 1))
+        counts = np.bincount(train_labels, minlength=num_classes)
+        args.class_counts = counts.tolist()
+        if getattr(args, 'class_weight', 'none') == 'balanced':
+            weights = counts.sum() / np.maximum(counts, 1) / num_classes
+            args.class_weights = weights.astype(np.float32).tolist()
+            logger.info(f"Class counts: {args.class_counts}; class weights: {args.class_weights}")
+        else:
+            args.class_weights = None
 
     dataLoader = {
         ds: DataLoader(datasets[ds],

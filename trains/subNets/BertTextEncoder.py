@@ -23,9 +23,18 @@ class BertTextEncoder(nn.Module):
             # Check if this is MMSA format: [N, 3, seq_len] with integer token IDs
             if text.shape[1] == 3 and text.dtype in (torch.long, torch.int, torch.int64):
                 input_ids = text[:, 0, :].long()       # [N, seq_len]
-                token_type_ids = text[:, 1, :].long()   # [N, seq_len]
-                attention_mask = text[:, 2, :].long()    # [N, seq_len]
-                with torch.set_grad_enabled(self.use_finetune):
+                # MMSA-FET stores BERT inputs as [input_ids, attention_mask, segment_ids].
+                # Some older loaders used [input_ids, segment_ids, attention_mask], so infer
+                # the attention row instead of assuming one fixed order.
+                row_1 = text[:, 1, :].long()
+                row_2 = text[:, 2, :].long()
+                if row_2.sum() == 0 or row_1.sum() >= row_2.sum():
+                    attention_mask = row_1
+                    token_type_ids = row_2
+                else:
+                    token_type_ids = row_1
+                    attention_mask = row_2
+                with torch.set_grad_enabled(self.use_finetune and self.training):
                     outputs = self.model(
                         input_ids=input_ids,
                         token_type_ids=token_type_ids,
@@ -37,7 +46,7 @@ class BertTextEncoder(nn.Module):
                 return text
 
         # Plain token ids [N, seq_len]
-        with torch.set_grad_enabled(self.use_finetune):
+        with torch.set_grad_enabled(self.use_finetune and self.training):
             outputs = self.model(input_ids=text)
             last_hidden_state = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
 
