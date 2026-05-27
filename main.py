@@ -90,6 +90,8 @@ def DMD_run(
             config_name = "dec_mosei_config.json"
         elif dataset_name == "iemocap":
             config_name = "iemocap_decalign_config.json"
+        elif dataset_name == "sims":
+            config_name = "dec_sims_config.json"
         else:
             config_name = "dec_config.json"
         config_file = Path(__file__).parent / "config" / config_name

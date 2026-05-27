@@ -31,7 +31,6 @@
     "output_dropout": 0.2,
     "text_dropout": 0.2,
     "attn_mask": true,
-    "loss_contract": "paper",
     "dec_loss_weight": 1.0,
     "alpha": 0.05,
     "beta": 0.05,

@@ -28,7 +28,6 @@
     "text_dropout": 0.0,
     "attn_mask": true,
     "task_loss": "mse",
-    "loss_contract": "paper",
     "dec_loss_weight": 1.0,
     "alpha": 0.1,
     "beta": 0.1,
